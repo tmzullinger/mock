@@ -696,6 +696,9 @@ def _prepare_nspawn_command(chrootPath, user, cmd, nspawn_args=None, env=None, c
     if distro_label not in epel or distro_version >= 7.5:
         # EL < 7.5 does not support the nspawn -a option. See BZ 1417387
         nspawn_argv += ['-a']
+    if distro_label in epel and distro_version < 8:
+        # EL < 8 does not support --bind=+sourcepath in EL < 8, replace '+' with chrootPath
+        nspawn_args = [arg.replace('--bind=+', '--bind=%s' % chrootPath) for arg in nspawn_args]
     nspawn_argv.extend(nspawn_args)
     if cwd:
         nspawn_argv.append('--chdir={0}'.format(cwd))
@@ -1301,12 +1304,18 @@ def load_config(config_path, name, uidManager, version, pkg_python_dir):
         '~' + pwd.getpwuid(os.getuid())[0]), '.config/mock.cfg')
     do_update_config(log, config_opts, cfg, uidManager, name)
 
-    # default /etc/hosts contents
-    if not config_opts['use_host_resolv'] and 'etc/hosts' not in config_opts['files']:
-        config_opts['files']['etc/hosts'] = dedent('''\
-            127.0.0.1 localhost localhost.localdomain
-            ::1       localhost localhost.localdomain localhost6 localhost6.localdomain6
-            ''')
+    if not config_opts['use_host_resolv']:
+        # default /etc/hosts contents
+        if 'etc/hosts' not in config_opts['files']:
+            config_opts['files']['etc/hosts'] = dedent('''\
+                127.0.0.1 localhost localhost.localdomain
+                ::1       localhost localhost.localdomain localhost6 localhost6.localdomain6
+                ''')
+        # bind mount an empty /etc/resolv.conf when using nspawn and networking is disabled
+        if config_opts['use_nspawn'] and not config_opts['rpmbuild_networking']:
+            config_opts['files']['var/tmp/empty'] = ''
+            config_opts['nspawn_args'] += ['--bind=+/var/tmp/empty:/etc/resolv.conf']
+
     if config_opts['use_container_host_hostname'] and '%_buildhost' not in config_opts['macros']:
         config_opts['macros']['%_buildhost'] = socket.getfqdn()
     return config_opts
